@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>尹婧 ❤ 冯起明</title>
+<style>
+  * { margin: 0; padding: 0; }
+  body { background: #000; overflow: hidden; height: 100vh; width: 100vw; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+// ======== 文字源 ========
+const TEXT = '尹婧❤冯起明';
+let ci = 0;
+function nextChar() { return TEXT[ci++ % TEXT.length]; }
+
+// ======== 3D 心形曲面采样 ========
+// 用经典 2D 心形极坐标方程，绕 Y 轴旋转生成 3D 旋转体
+// 2D 心形: x = 16sin³(t), y = 13cos(t)-5cos(2t)-2cos(3t)-cos(4t)
+// 旋转体: 把 x 当作半径 r，绕 Y 轴转一圈
+const points = [];
+const N_T = 32;     // 心形轮廓采样
+const N_PHI = 40;   // 旋转方向采样
+
+for (let i = 0; i <= N_T; i++) {
+  const t = (i / N_T) * Math.PI * 2;
+
+  // 经典心形参数方程
+  const hx = 16 * Math.pow(Math.sin(t), 3);
+  const hy = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+
+  // hx 作为到 Y 轴的距离（半径），hy 作为 Y 坐标
+  const r = Math.abs(hx);
+  const ySign = hx >= 0 ? 1 : 1; // y 不变
+
+  for (let j = 0; j < N_PHI; j++) {
+    const phi = (j / N_PHI) * Math.PI * 2;
+
+    const x = r * Math.cos(phi);
+    const y = hy;
+    const z = r * Math.sin(phi);
+
+    // 镂空网格线
+    if (i % 2 === 0 || j % 2 === 0) {
+      points.push({ x, y, z });
+    }
+  }
+}
+
+// ======== 3D 旋转 ========
+function rotY(p, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return { x: p.x * c + p.z * s, y: p.y, z: -p.x * s + p.z * c };
+}
+function rotX(p, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return { x: p.x, y: p.y * c - p.z * s, z: p.y * s + p.z * c };
+}
+
+// ======== 飘落粒子 ========
+const parts = [];
+for (let i = 0; i < 30; i++) {
+  parts.push({
+    x: Math.random() * 2 - 1,
+    y: Math.random() * 2 - 1,
+    sp: 0.001 + Math.random() * 0.003,
+    sz: 10 + Math.random() * 12,
+    ch: TEXT[Math.floor(Math.random() * TEXT.length)],
+    al: 0.08 + Math.random() * 0.18,
+    dx: (Math.random() - 0.5) * 0.0008
+  });
+}
+
+// ======== 渲染 ========
+let time = 0;
+let lastTime = performance.now();
+
+function render(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  time += dt;
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ctx.fillRect(0, 0, W, H);
+
+  // ---- 飘落粒子 ----
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  for (const p of parts) {
+    p.y += p.sp;
+    p.x += p.dx;
+    if (p.y > 1.1) { p.y = -0.1; p.x = Math.random() * 2 - 1; }
+    ctx.fillStyle = `rgba(255, 105, 180, ${p.al})`;
+    ctx.font = `${p.sz}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(p.ch, p.x * W, p.y * H);
+  }
+
+  // ---- 心跳 ----
+  const beat = 1 + 0.07 * Math.sin(time * 5) + 0.03 * Math.abs(Math.sin(time * 10));
+
+  // ---- 旋转 ----
+  const aY = time * 1.2;
+  const aX = Math.sin(time * 0.4) * 0.2;
+
+  // ---- 自适应缩放：根据屏幕宽高取最小值，手机竖屏也能完整显示 ----
+  const baseScale = Math.min(W, H) / 52;
+  const scale = baseScale * beat;
+
+  // ---- 居中偏移：画面正中央 ----
+  const centerX = W / 2;
+  const centerY = H / 2;
+
+  // ---- 投影 ----
+  ci = Math.floor(time * 3) % TEXT.length;
+  const proj = [];
+  for (const pt of points) {
+    let p = rotY(pt, aY);
+    p = rotX(p, aX);
+
+    const persp = 50;
+    const zz = p.z + persp;
+    if (zz < 5) continue;
+    const f = persp / zz;
+
+    proj.push({
+      sx: p.x * f * scale + centerX,
+      sy: p.y * f * scale + centerY,
+      depth: p.z,
+      char: nextChar()
+    });
+  }
+
+  proj.sort((a, b) => a.depth - b.depth);
+
+  // ---- 绘制 ----
+  for (const p of proj) {
+    if (p.sx < -50 || p.sx > W + 50 || p.sy < -50 || p.sy > H + 50) continue;
+
+    const t = Math.max(0, Math.min(1, (p.depth + 18) / 36));
+    const fontSize = (10 + 8 * t) * (scale / baseScale);
+
+    const r = Math.floor(180 + 75 * t);
+    const g = Math.floor(40 + 65 * t);
+    const b = Math.floor(100 + 80 * t);
+    const alpha = 0.25 + 0.75 * t;
+
+    ctx.shadowColor = `rgba(255, 20, 147, ${0.3 * t})`;
+    ctx.shadowBlur = 2 + 6 * t;
+
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    ctx.font = `bold ${fontSize}px "Microsoft YaHei", "PingFang SC", "Hiragino Sans", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(p.char, p.sx, p.sy);
+  }
+
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+
+  requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
